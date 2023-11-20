@@ -4,6 +4,7 @@
 MainWindow::MainWindow(QMainWindow* parent)
     : QMainWindow(parent)
 {
+    std::cout << "MainWindow线程的ID为: " << std::this_thread::get_id() << std::endl;
     // 创建菜单栏
     QMenuBar* menuBar = new QMenuBar(this);
     setMenuBar(menuBar);
@@ -24,6 +25,7 @@ MainWindow::MainWindow(QMainWindow* parent)
 
     for (const auto& pair : snMap)
     {
+        std::cout << "MainWindow Sn线程的ID为: " << std::this_thread::get_id() << std::endl;
         std::cout << pair << std::endl;
         // 创建新的标签页内容
         QWidget* newTabContent = new qt_Mer(pair);

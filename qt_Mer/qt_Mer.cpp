@@ -24,6 +24,8 @@ qt_Mer::qt_Mer(gxstring SN, QWidget* parent)
     : QWidget(parent)
 {
     m_SN = SN;
+    std::cout << "qt_Mer线程的ID为: " << std::this_thread::get_id() << std::endl;
+
 
     this->resize(1120, 830);
     ui = new MyWidget(this);
@@ -97,6 +99,7 @@ qt_Mer::qt_Mer(gxstring SN, QWidget* parent)
     connect(ui->loadSettings, &QPushButton::clicked, this, &qt_Mer::loadSettings);    //读取配置
     connect(ui->showButton, &QPushButton::clicked, this, &qt_Mer::transShow);    //是否展示
     connect(timer, &QTimer::timeout, this, &qt_Mer::showMatInLabel);
+    connect(this, &qt_Mer::frameIDUpdated, this, &qt_Mer::updateFrameID);
 
     if (ui->gainAuto->currentText() == "Continuous")
     {
@@ -154,15 +157,21 @@ qt_Mer::qt_Mer(gxstring SN, QWidget* parent)
 
 qt_Mer::~qt_Mer()
 {
+    std::cout << "Performing cleanup before quitting..." << std::endl;
+    isSave = false; 
+    m_conditionVariable.notify_all();
     // 等待保存线程结束
-    cout << "析构" << endl;
     if (m_saveThread.joinable())
     {
-        cout << "join" << endl;
+        std::cout << "Waiting for save thread to finish..." << std::endl;
         m_saveThread.join();
     }
+
+    // 清空队列
     std::queue<ImageDataWithFrameID> emptyQueue;
-    g_imageQueue.swap(emptyQueue);
+    std::swap(g_imageQueue, emptyQueue);
+
+    std::cout << "Cleanup finished" << std::endl;
 }
 
 void qt_Mer::updateGainState(int index)
@@ -446,18 +455,16 @@ void qt_Mer::on_startCapture_clicked()
                         timer->start(200); // 如果定时器未运行，启动定时器
                     }
                 }
+                cout << "开始采集" << endl;
+                gxstring SN = getCurrentSN();
+                folderCreated(static_cast<string>(getCurrentSN()));
 
-            cout << "开始采集" << endl;
-            gxstring SN = getCurrentSN();
-            folderCreated(static_cast<string>(getCurrentSN()));
+                m_objStreamPtr->RegisterCaptureCallback(this, NULL);
+                isOpenStream = true;
+                ui->startCapture->setEnabled(false);
 
-            m_objStreamPtr->RegisterCaptureCallback(this, NULL);
-            isOpenStream = true;
-            ui->startCapture->setEnabled(false);
-
-            //std::thread saveThread(&qt_Mer::saveThread, this);
-            m_objStreamPtr->StartGrab();
-            m_objRemoteFeatureControlPtr->GetCommandFeature("AcquisitionStart")->Execute();
+                m_objStreamPtr->StartGrab();
+                m_objRemoteFeatureControlPtr->GetCommandFeature("AcquisitionStart")->Execute();
             }
         }
     }
@@ -525,13 +532,19 @@ void qt_Mer::DoOnDeviceOfflineEvent(void* pUserParam)
     cout << "设备掉线，请检查并重新连接。" << endl;
 }
 
+void qt_Mer::updateFrameID(const QString& newFrameID)
+{
+    ui->frameID->setText(newFrameID);
+}
 
 void qt_Mer::DoOnImageCaptured(CImageDataPointer& objImageDataPointer, void* pUserParam)
 {
+    std::cout << "DoOnImageCaptured线程的ID为: " << std::this_thread::get_id() << std::endl;
     firstCollect = true;
     //GX_PIXEL_FORMAT_ENTRY emPixelFormat =objImageDataPointer->GetPixelFormat();
     QString m_FrameID = QString::number(objImageDataPointer->GetFrameID());
-    ui->frameID->setText(m_FrameID);
+    emit frameIDUpdated(m_FrameID);
+
     string filePath = outputPicFolder + m_FrameID.toStdString() + ".tiff";
 
     void* pBuffer = objImageDataPointer->GetBuffer();
@@ -545,7 +558,6 @@ void qt_Mer::DoOnImageCaptured(CImageDataPointer& objImageDataPointer, void* pUs
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         g_imageQueue.push(*imageDataWithFrameIDPtr);
-        isSave = true;
     }//代码块，结束时销毁，管理互斥锁的加锁和解锁
     delete imageDataWithFrameIDPtr;
     // 唤醒消费者线程
@@ -590,13 +602,20 @@ void qt_Mer::DoOnImageCaptured(CImageDataPointer& objImageDataPointer, void* pUs
 }
 
 void qt_Mer::saveThread() {
-    while (1)
+        std::cout << "saveThread线程的ID为: " << std::this_thread::get_id() << std::endl;
+    while (isSave)
     {
         ImageDataWithFrameID* getPtr = new ImageDataWithFrameID();
         {
             std::unique_lock<std::mutex> lock(m_mutex);
+            std::cout << "wait lock " << std::endl;
             // 等待图像队列不为空
-            m_conditionVariable.wait(lock, [this]() { return !g_imageQueue.empty(); });
+            m_conditionVariable.wait(lock, [this]() { return (!g_imageQueue.empty() || !isSave); });
+            if (!isSave)
+            {
+                cout<< "nosave" << endl;
+                return;
+            }
             // 取出队列头部的图像
             *getPtr = g_imageQueue.front();
             g_imageQueue.pop();
@@ -616,10 +635,10 @@ void qt_Mer::saveThread() {
         }
         // 释放ImageData对象的内存
         delete getPtr;
-        if (g_imageQueue.empty() && !isOpenStream)
-        {
-            isSave = false;
-        }
+        //if (g_imageQueue.empty() && !isOpenStream)
+        //{
+        //    isSave = false;
+        //}
     }
 }
 
@@ -643,6 +662,7 @@ void qt_Mer::showMatInLabel()
     {
         if (isShow)
         {
+            std::cout << "showMatInLabel内线程的ID为: " << std::this_thread::get_id() << std::endl;
             cv::Mat img = cv::Mat::zeros(cv::Size(m_width, m_height), CV_8UC1);
             cout << "show" << endl;
             {

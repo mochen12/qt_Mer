@@ -150,6 +150,7 @@ public slots:
 	void writeSettings();
 	void transShow();
 	void showMatInLabel();
+	void updateFrameID(const QString& newFrameID);
 
 public:
 	void updateUI();
@@ -163,6 +164,9 @@ public:
 	void pictureSave(CImageDataPointer& objImageDataPointer, Mat capturedImg, QString m_FrameID);
 	void pictureSaveBayer(CImageDataPointer& objImageDataPointer, void* pRGB24Buffer);  //±£´æÍ¼Æ¬
 	void saveThread();
+
+signals:
+	void frameIDUpdated(const QString& newFrameID);
 };
 
 //class QtCaptureEventHandler : public QObject, public ICaptureEventHandler
